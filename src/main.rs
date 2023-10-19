@@ -1,6 +1,6 @@
 mod utils;
-use std::io;
-use std::{collections::hash_map::Entry, fs::File};
+
+use std::{fs::File};
 
 use reqwest::{blocking::Client, redirect::Policy};
 use scraper::{Html, Selector};
@@ -15,12 +15,12 @@ fn main() {
     let tr_selector = Selector::parse("tr.ALTbase20").unwrap();
     let a_selector = Selector::parse("a").unwrap();
     let pair_selector = Selector::parse("tr.BGCLibere.ALTbase25,tr.BGCTDLibere.ALTbase25").unwrap();
-    let code_selector = Selector::parse("td.COLceleste").unwrap();
-    let player_selector = Selector::parse("td.Capitalize.POSbase0").unwrap();
+    let _code_selector = Selector::parse("td.COLceleste").unwrap();
+    let _player_selector = Selector::parse("td.Capitalize.POSbase0").unwrap();
     let mixed_selector =
         Selector::parse("td.Capitalize.POSbase0, td.COLceleste, td.Capitalize.POSbase0>span")
             .unwrap();
-    let mut stringa = String::new();
+    let _stringa = String::new();
     let mut circolo = Circolo::new();
     for selected in document.select(&tr_selector) {
         //stdin.read_line(&mut stringa).unwrap();
@@ -37,7 +37,7 @@ fn main() {
         let tabella = client.get(link).send().unwrap().text().unwrap();
         let parsata = Html::parse_document(&tabella);
         //let anagrafica: HashMap<String, String> = HashMap::new();
-        for (posizione, coppia) in parsata.select(&pair_selector).enumerate() {
+        for (_posizione, coppia) in parsata.select(&pair_selector).enumerate() {
             let mut copia = coppia
                 .select(&mixed_selector)
                 .map(|node| node.text().next().unwrap().trim());
