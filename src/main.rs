@@ -25,6 +25,7 @@ struct MyEguiApp {
     channel: (Sender<f32>, Receiver<f32>),
     percentuale: f32,
     available: bool,
+    failure: bool,
 }
 
 impl MyEguiApp {
@@ -41,6 +42,7 @@ impl MyEguiApp {
             channel: (send, recv),
             percentuale: 0.0,
             available: true,
+            failure: false,
         }
     }
 }
@@ -75,6 +77,7 @@ impl eframe::App for MyEguiApp {
             if self.available {
                 if ui.button("Download report").clicked() {
                     self.available = false;
+                    self.failure = false;
                     let new_sender = self.channel.0.clone();
                     std::thread::spawn(move || {
                         download_report(start, end, new_sender);
@@ -86,13 +89,22 @@ impl eframe::App for MyEguiApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
             match self.channel.1.try_recv() {
                 Ok(t) => {
-                    self.percentuale = t;
+                    if (1.0 + t).abs() < 1.0e-6 {
+                        println!("Disconnected");
+                        let channel = std::sync::mpsc::channel::<f32>();
+                        self.channel = channel;
+                        self.failure = true;
+                        self.available = true;
+                    } else {
+                        self.percentuale = t;
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     let channel = std::sync::mpsc::channel::<f32>();
                     self.channel = channel;
+                    self.available = true;
                 }
-                Err(_) => {}
+                Err(_e) => {}
             };
             ui.add(eframe::egui::widgets::ProgressBar::new(self.percentuale));
             if (1.0 - self.percentuale).abs() < 1.0e-6 {
@@ -100,6 +112,12 @@ impl eframe::App for MyEguiApp {
                     eframe::egui::RichText::new("Completato").color(eframe::egui::Color32::GREEN),
                 );
                 self.available = true;
+            }
+            if self.failure {
+                ui.label(
+                    eframe::egui::RichText::new("Errore: controlla la tua connessione")
+                        .color(eframe::egui::Color32::RED),
+                );
             }
         });
     }
