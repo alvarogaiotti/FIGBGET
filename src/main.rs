@@ -1,97 +1,106 @@
-mod utils;
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use std::{fs::File};
-
-use reqwest::{blocking::Client, redirect::Policy};
-use scraper::{Html, Selector};
-use utils::*;
-const BASE: &str = "https://www.federbridge.it/punti/TouSimGrpWeb.asp?GrpCode=f0784";
-const CODICE_CIRCOLO: &str = "[F0784]";
+use chrono::prelude::*;
+use eframe::egui::{self, Button};
+use egui_extras::DatePickerButton;
+use figbget::download_report;
+use std::sync::mpsc::{Receiver, Sender};
 
 fn main() {
-    let client = Client::builder().redirect(Policy::none()).build().unwrap();
-    let body = client.get(BASE).send().unwrap().text().unwrap();
-    let document = Html::parse_document(&body);
-    let tr_selector = Selector::parse("tr.ALTbase20").unwrap();
-    let a_selector = Selector::parse("a").unwrap();
-    let pair_selector = Selector::parse("tr.BGCLibere.ALTbase25,tr.BGCTDLibere.ALTbase25").unwrap();
-    let _code_selector = Selector::parse("td.COLceleste").unwrap();
-    let _player_selector = Selector::parse("td.Capitalize.POSbase0").unwrap();
-    let mixed_selector =
-        Selector::parse("td.Capitalize.POSbase0, td.COLceleste, td.Capitalize.POSbase0>span")
-            .unwrap();
-    let _stringa = String::new();
-    let mut circolo = Circolo::new();
-    for selected in document.select(&tr_selector) {
-        //stdin.read_line(&mut stringa).unwrap();
-        let codice_torneo = selected.text().nth(3).unwrap();
-        println!("{}", codice_torneo);
-        let mut tournament = Tournament::new(codice_torneo);
-        let link = selected
-            .select(&a_selector)
-            .next()
-            .unwrap()
-            .value()
-            .attr("href")
-            .unwrap();
-        let tabella = client.get(link).send().unwrap().text().unwrap();
-        let parsata = Html::parse_document(&tabella);
-        //let anagrafica: HashMap<String, String> = HashMap::new();
-        for (_posizione, coppia) in parsata.select(&pair_selector).enumerate() {
-            let mut copia = coppia
-                .select(&mixed_selector)
-                .map(|node| node.text().next().unwrap().trim());
-            copia.clone().for_each(|t| println!("{t}"));
-            let codice1 = copia.by_ref().next().expect("codice giocatore non trovato");
-            let nome = copia.by_ref().next().expect("nome non trovato");
-            let socio = copia.by_ref().next().expect("codice circolo non trovato");
-            circolo.presente_o_inserisci(codice1, nome, socio == CODICE_CIRCOLO);
-            let codice2 = copia.by_ref().next().expect("codice giocatore non trovato");
-            let nome = copia.by_ref().next().expect("nome non trovato");
-            let socio = copia.by_ref().next().expect("codice circolo non trovato");
-            let coppia = [codice1, codice2];
-            circolo.presente_o_inserisci(codice2, nome, socio == CODICE_CIRCOLO);
-            tournament.posizioni.push(coppia);
-
-            // for testo in coppia.select(&mixed_selector) {
-            //     println!("{}", testo.text().next().unwrap().trim());
-            // }
-            //for real_code in code_elem {
-            //    println!("{}", real_code.text().next().unwrap());
-            //}
-            //for real_player in player_elem {
-            //    println!("{}", real_player.text().next().unwrap());
-            //}
-        }
-        tournament.dai_premi(&mut circolo);
-    }
-    for player in circolo.values() {
-        println!("{} => {}", player.nome, player.tot_premi());
-    }
-    let file = File::create("Tornei.csv").unwrap();
-    let mut wtr = csv::WriterBuilder::new().delimiter(b';').from_writer(file);
-
-    // When writing records without Serde, the header record is written just
-    // like any other record.
-    wtr.write_record(&[
-        "Giocatore",
-        "Socio",
-        "Primo",
-        "Secondo",
-        "Terzo",
-        "Quarto",
-        "Tot Tornei",
-        "Tot Premi",
-        "EV",
-    ])
+    let native_options = eframe::NativeOptions {
+        initial_window_size: Option::from(egui::vec2(400., 400.)),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "Scarica Report Tornei",
+        native_options,
+        Box::new(|cc| Box::new(MyEguiApp::new(cc))),
+    )
     .unwrap();
-    for player in circolo.values() {
-        let record = player.as_record();
-        wtr.write_record(
-            std::convert::TryInto::<[&str; 9]>::try_into(record.split(", ").collect::<Vec<&str>>())
-                .unwrap(),
-        )
-        .unwrap();
+}
+
+struct MyEguiApp {
+    start: NaiveDate,
+    end: NaiveDate,
+    channel: (Sender<f32>, Receiver<f32>),
+    percentuale: f32,
+    available: bool,
+}
+
+impl MyEguiApp {
+    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
+        // Restore app state using cc.storage (requires the "persistence" feature).
+        // Use the cc.gl (a glow::Context) to create graphics shaders and buffers that you can use
+        // for e.g. egui::PaintCallback.
+        let today = Utc::now();
+        let (send, recv) = std::sync::mpsc::channel::<f32>();
+        Self {
+            start: NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap(),
+            end: today.date_naive(),
+            channel: (send, recv),
+            percentuale: 0.0,
+            available: true,
+        }
     }
-    wtr.flush().unwrap();
+}
+
+impl eframe::App for MyEguiApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Seleziona date per il report");
+            ui.label("Dal:");
+            ui.add_space(2.0);
+            if ui.add(DatePickerButton::new(&mut self.start)).clicked() {
+                self.percentuale = 0.0;
+            };
+            ui.add_space(2.0);
+            ui.label("Al:");
+            ui.add_space(2.0);
+            let rect = ui.available_rect_before_wrap();
+            if ui
+                .child_ui_with_id_source(
+                    rect,
+                    eframe::egui::Layout::left_to_right(eframe::egui::Align::Min),
+                    "Second date",
+                )
+                .add(DatePickerButton::new(&mut self.end))
+                .clicked()
+            {
+                self.percentuale = 0.0;
+            };
+            let start = self.start;
+            let end = self.end;
+            ui.add_space(20.0);
+            if self.available {
+                if ui.button("Download report").clicked() {
+                    self.available = false;
+                    let new_sender = self.channel.0.clone();
+                    std::thread::spawn(move || {
+                        download_report(start, end, new_sender);
+                    });
+                }
+            } else {
+                ui.add_enabled(false, Button::new("Download report"));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            match self.channel.1.try_recv() {
+                Ok(t) => {
+                    self.percentuale = t;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    let channel = std::sync::mpsc::channel::<f32>();
+                    self.channel = channel;
+                }
+                Err(_) => {}
+            };
+            ui.add(eframe::egui::widgets::ProgressBar::new(self.percentuale));
+            if (1.0 - self.percentuale).abs() < 1.0e-6 {
+                ui.label(
+                    eframe::egui::RichText::new("Completato").color(eframe::egui::Color32::GREEN),
+                );
+                self.available = true;
+            }
+        });
+    }
 }
