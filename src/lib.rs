@@ -28,13 +28,19 @@ pub fn download_report(start: NaiveDate, end: NaiveDate, sender: Sender<f32>) {
     let giocatore_selector = CodeNameCircoloSelector::new();
     let mut circolo = Circolo::new();
     let client = get_client();
-    let body = client.get(BASE).call().unwrap().into_string().unwrap();
+    let body = if let Ok(body) = client.get(BASE).call() {
+        body.into_string().unwrap()
+    } else {
+        sender.send(-1.0).unwrap();
+        return;
+    };
     let document = Html::parse_document(&body);
     let selettore_torneo = TournamentSelector::new();
     let tornei = document.select(&selettore_torneo);
     let mut cumulativo_coppie = 0;
     let tornei: Vec<ElementRef<'_>> = tornei.collect();
     let tot_tornei = tornei.len();
+    let mut tornei_in_target = 0;
 
     for (numero_torneo, selected) in tornei.into_iter().enumerate() {
         // Invia al thread principale lo stato dell'avanzamento
@@ -63,11 +69,18 @@ pub fn download_report(start: NaiveDate, end: NaiveDate, sender: Sender<f32>) {
                 break;
             }
             std::cmp::Ordering::Greater => continue,
-            std::cmp::Ordering::Equal => {}
+            std::cmp::Ordering::Equal => {
+                tornei_in_target += 1;
+            }
         }
 
         let link = link_element.value().attr("href").unwrap();
-        let tabella = client.get(link).call().unwrap().into_string().unwrap();
+        let tabella = if let Ok(body) = client.get(link).call() {
+            body.into_string().unwrap()
+        } else {
+            sender.send(-1.0).unwrap();
+            return;
+        };
         let parsata = Html::parse_document(&tabella);
         for coppia in parsata.select(&PairSelector::new()) {
             cumulativo_coppie += 1;
@@ -102,7 +115,7 @@ pub fn download_report(start: NaiveDate, end: NaiveDate, sender: Sender<f32>) {
     }
     let glob_row = glob_row as u32 + 1;
     wtr.write(glob_row + 1, 0, "Tot tornei").unwrap();
-    wtr.write(glob_row + 1, 1, tot_tornei as u32).unwrap();
+    wtr.write(glob_row + 1, 1, tornei_in_target as u32).unwrap();
     wtr.write(glob_row + 1, 2, "Tot coppie").unwrap();
     wtr.write(glob_row + 1, 3, cumulativo_coppie).unwrap();
     wtr.write(glob_row + 1, 4, "Tot incasso").unwrap();
@@ -110,13 +123,14 @@ pub fn download_report(start: NaiveDate, end: NaiveDate, sender: Sender<f32>) {
     wtr.write(glob_row + 2, 2, "Tot premi").unwrap();
     wtr.write(glob_row + 2, 3, sum).unwrap();
     wtr.write(glob_row + 2, 4, "Tot carte").unwrap();
-    wtr.write(glob_row + 2, 5, tot_tornei as u32 * 15).unwrap();
+    wtr.write(glob_row + 2, 5, tornei_in_target as u32 * 15)
+        .unwrap();
     wtr.write(glob_row + 2, 6, "Tot quota FIGB").unwrap();
     wtr.write(glob_row + 2, 7, f64::from(cumulativo_coppie) * 1.3)
         .unwrap();
 
     let tot_incasso = f64::from(cumulativo_coppie) * (10.0 - 1.3)
-        - f64::from(tot_tornei as u32 * 15)
+        - f64::from(tornei_in_target as u32 * 15)
         - f64::from(sum);
     let format = Format::new().set_bold().set_font_color(Color::Red);
     wtr.write_with_format(glob_row + 3, 2, "Incasso netto", &format)
@@ -127,7 +141,7 @@ pub fn download_report(start: NaiveDate, end: NaiveDate, sender: Sender<f32>) {
     wtr.write(
         glob_row + 4,
         3,
-        f64::trunc(tot_incasso / f64::from(tot_tornei as u32) * 100.0) / 100.0,
+        f64::trunc(tot_incasso / f64::from(tornei_in_target as u32) * 100.0) / 100.0,
     )
     .unwrap();
     wtr.autofit();
