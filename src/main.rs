@@ -4,6 +4,7 @@ use chrono::prelude::*;
 use eframe::egui::{self, Button};
 use egui_extras::DatePickerButton;
 use figbget::download_report;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 fn main() {
@@ -24,7 +25,7 @@ struct MyEguiApp {
     end: NaiveDate,
     channel: (Sender<f32>, Receiver<f32>),
     percentuale: f32,
-    available: bool,
+    available: AtomicBool,
     failure: bool,
 }
 
@@ -41,7 +42,7 @@ impl MyEguiApp {
             end: today.date_naive(),
             channel: (send, recv),
             percentuale: 0.0,
-            available: true,
+            available: AtomicBool::new(true),
             failure: false,
         }
     }
@@ -74,9 +75,9 @@ impl eframe::App for MyEguiApp {
             let start = self.start;
             let end = self.end;
             ui.add_space(20.0);
-            if self.available {
+            if self.available.load(Ordering::Relaxed) {
                 if ui.button("Download report").clicked() {
-                    self.available = false;
+                    self.available.store(false, Ordering::Relaxed);
                     self.failure = false;
                     let new_sender = self.channel.0.clone();
                     std::thread::spawn(move || {
@@ -93,7 +94,7 @@ impl eframe::App for MyEguiApp {
                         let channel = std::sync::mpsc::channel::<f32>();
                         self.channel = channel;
                         self.failure = true;
-                        self.available = true;
+                        self.available.store(true, Ordering::Relaxed);
                     } else {
                         self.percentuale = t;
                     }
@@ -101,7 +102,7 @@ impl eframe::App for MyEguiApp {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     let channel = std::sync::mpsc::channel::<f32>();
                     self.channel = channel;
-                    self.available = true;
+                    self.available.store(true, Ordering::Relaxed);
                 }
                 Err(_e) => {}
             };
@@ -117,7 +118,8 @@ impl eframe::App for MyEguiApp {
                 ui.label(
                     eframe::egui::RichText::new("Completato").color(eframe::egui::Color32::GREEN),
                 );
-                self.available = true;
+                self.available.store(true, Ordering::Relaxed);
+                self.percentuale = 0.0;
             }
             if self.failure {
                 ui.label(
