@@ -75,7 +75,12 @@ pub fn download_report(start: NaiveDate, end: NaiveDate, sender: Sender<f32>) {
         }
 
         let link = link_element.value().attr("href").unwrap();
-        let tabella = client.get(link).call().unwrap().into_string().unwrap();
+        let tabella = if let Ok(body) = client.get(link).call() {
+            body.into_string().unwrap()
+        } else {
+            sender.send(-1.0).unwrap();
+            return;
+        };
         let parsata = Html::parse_document(&tabella);
         for coppia in parsata.select(&PairSelector::new()) {
             cumulativo_coppie += 1;

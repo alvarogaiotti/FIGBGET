@@ -90,7 +90,6 @@ impl eframe::App for MyEguiApp {
             match self.channel.1.try_recv() {
                 Ok(t) => {
                     if (1.0 + t).abs() < 1.0e-6 {
-                        println!("Disconnected");
                         let channel = std::sync::mpsc::channel::<f32>();
                         self.channel = channel;
                         self.failure = true;
@@ -106,7 +105,14 @@ impl eframe::App for MyEguiApp {
                 }
                 Err(_e) => {}
             };
-            ui.add(eframe::egui::widgets::ProgressBar::new(self.percentuale));
+            if self.failure {
+                ui.add(
+                    eframe::egui::widgets::ProgressBar::new(self.percentuale)
+                        .fill(eframe::egui::Color32::RED),
+                );
+            } else {
+                ui.add(eframe::egui::widgets::ProgressBar::new(self.percentuale));
+            }
             if (1.0 - self.percentuale).abs() < 1.0e-6 {
                 ui.label(
                     eframe::egui::RichText::new("Completato").color(eframe::egui::Color32::GREEN),
